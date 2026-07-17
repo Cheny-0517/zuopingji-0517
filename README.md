@@ -28,71 +28,10 @@
 | 实时通信 | System.Threading.Channels                            |
 
 ## 工作原理
+<img width="2158" height="1024" alt="image" src="https://github.com/user-attachments/assets/fd96377b-0b97-433e-86eb-37c03bedde12" />
 
-```mermaid
-graph TD
-    %% =======================================
-    %% 1. 定义节点内容 (纯净双引号包裹)
-    %% =======================================
-    User["用户输入 URL"]
-    
-    %% 核心中枢
-    AgentState["Agent 组装请求发给大模型: 提示词(常驻) + 工具清单(常驻) + 对话历史"]
-    LLM["DeepSeek 大模型: 阅读历史，决定调用哪个工具、填什么参数"]
-    AgentAction["Agent 解析模型指令，执行被点名的工具"]
-    
-    %% 具体的工具集
-    ToolParse["工具: 页面解析 & 网页抓取 (4层降级策略)"]
-    ToolFetch["工具: 抓取正文 (按需截断超长文本)"]
-    ToolSave["工具: 保存摘要 (触发前端 UI 渲染卡片)"]
-    ToolEnd["工具: 结束任务 (关闭通道)"]
-    
-    End(["流程结束: 前端进度条达 100%"])
 
-    %% =======================================
-    %% 2. 定义执行流 (主干直线，循环靠侧边虚线)
-    %% =======================================
-    User --> AgentState
-    AgentState --> LLM
-    LLM --> AgentAction
-    
-    %% Agent 分发到具体工具
-    AgentAction --> |"调用: 提取列表"| ToolParse
-    AgentAction --> |"调用: 抓取正文"| ToolFetch
-    AgentAction --> |"调用: 保存摘要"| ToolSave
-    AgentAction --> |"调用: 结束任务"| ToolEnd
-    
-    %% =======================================
-    %% 3. 核心精髓：状态写回与循环反馈 (对应截图左侧虚线)
-    %% =======================================
-    ToolParse -.-> |"结果写入历史，进入下一轮"| AgentState
-    ToolFetch -.-> AgentState
-    ToolSave -.-> AgentState
-    
-    %% 结束分支跳出循环
-    ToolEnd --> End
-
-    %% =======================================
-    %% 4. 清新脱俗的极简配色 (低饱和度浅色底 + 雅致边框)
-    %% =======================================
-    
-    %% 用户/结束 (淡雅灰白)
-    classDef baseStyle fill:#F8FAFC,stroke:#CBD5E1,stroke-width:1px,color:#475569
-    %% Agent 状态/执行 (清透薄荷绿)
-    classDef agentStyle fill:#F0FDF4,stroke:#86EFAC,stroke-width:2px,color:#166534
-    %% 大模型 (静谧海蓝)
-    classDef llmStyle fill:#F0F9FF,stroke:#7DD3FC,stroke-width:2px,color:#0369A1
-    %% 工具层 (柔和香芋紫)
-    classDef toolStyle fill:#FAF5FF,stroke:#D8B4FE,stroke-width:2px,color:#581C87
-
-    %% 应用样式
-    class User,End baseStyle
-    class AgentState,AgentAction agentStyle
-    class LLM llmStyle
-    class ToolParse,ToolFetch,ToolSave,ToolEnd toolStyle
-```
-
-1. ### ⚙️ 核心工作流 (Agent ReAct 机制)
+1. ###  核心工作流 (Agent ReAct 机制)
 
    本项目底层采用 **Agent + LLM + Tools** 的 ReAct (Reason + Act) 闭环架构。
 
@@ -102,7 +41,7 @@ graph TD
 
    根据目标页面的不同，Agent 会在 LLM 的指挥下走入以下两条链路：
 
-   #### 📌 路径 A：列表页处理（多篇循环）
+   ####  路径 A：列表页处理（多篇循环）
 
    当输入的 URL 为文章列表或首页时：
 
@@ -111,7 +50,7 @@ graph TD
    3. **摘要与渲染**：LLM 基于正文生成摘要并发出保存指令，**Agent 调用 `保存摘要` 工具**。该工具同步触发后端 Channel，驱动前端 UI 瀑布式弹出摘要卡片。
    4. **循环闭环**：所有文章处理完毕后，LLM 判定无后续任务，**Agent 调用 `结束任务` 工具**关闭数据通道，进度达 100%。
 
-   #### 📌 路径 B：单篇文章处理（智能降级）
+   ####  路径 B：单篇文章处理（智能降级）
 
    当输入的 URL 为具体的单篇文章详情页时：
 
