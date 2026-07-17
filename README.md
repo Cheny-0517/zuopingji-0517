@@ -19,69 +19,115 @@
 
 ## 技术栈
 
-| 层级 | 技术 |
-|---|---|
-| 框架 | .NET 8 Blazor Server (InteractiveServer) |
-| 数据库 | SQLite + EF Core 8 |
-| 大模型 | DeepSeek API (`deepseek-chat`) |
+| 层级     | 技术                                                 |
+| -------- | ---------------------------------------------------- |
+| 框架     | .NET 8 Blazor Server (InteractiveServer)             |
+| 数据库   | SQLite + EF Core 8                                   |
+| 大模型   | DeepSeek API (`deepseek-chat`)                       |
 | 网页抓取 | curl.exe / HttpClient / Playwright / HtmlAgilityPack |
-| 实时通信 | System.Threading.Channels |
+| 实时通信 | System.Threading.Channels                            |
 
 ## 工作原理
 
 ```mermaid
-flowchart TD
-    subgraph F1["流程一：Agent 决策与执行"]
-        direction TB
-        A["用户输入 URL"] --> B["Agent 每轮发给大模型<br/>提示词(常驻) + 工具清单(常驻) + 对话历史"]
-        B --> C["DeepSeek 大模型<br/>决定调哪个工具、填什么参数"]
-        C --> D["Agent 执行被点名的工具<br/>提取列表 / 抓取正文 / 保存摘要"]
-        D --> E["页面解析 & 网页抓取<br/>4层降级"]
-        E -.->|"结果写入历史，进入下一轮"| B
-    end
+graph TD
+    %% =======================================
+    %% 1. 定义节点内容 (纯净双引号包裹)
+    %% =======================================
+    User["用户输入 URL"]
+    
+    %% 核心中枢
+    AgentState["Agent 组装请求发给大模型: 提示词(常驻) + 工具清单(常驻) + 对话历史"]
+    LLM["DeepSeek 大模型: 阅读历史，决定调用哪个工具、填什么参数"]
+    AgentAction["Agent 解析模型指令，执行被点名的工具"]
+    
+    %% 具体的工具集
+    ToolParse["工具: 页面解析 & 网页抓取 (4层降级策略)"]
+    ToolFetch["工具: 抓取正文 (按需截断超长文本)"]
+    ToolSave["工具: 保存摘要 (触发前端 UI 渲染卡片)"]
+    ToolEnd["工具: 结束任务 (关闭通道)"]
+    
+    End(["流程结束: 前端进度条达 100%"])
 
-    subgraph F2["流程二：结果实时展示"]
-        direction TB
-        G["大模型写好摘要<br/>作为 save_summary 参数"] --> H["写入 Channel 事件管道"]
-        H --> I["UI 实时消费"]
-        I --> J["进度条 · 状态日志 · 结果卡片"]
-    end
+    %% =======================================
+    %% 2. 定义执行流 (主干直线，循环靠侧边虚线)
+    %% =======================================
+    User --> AgentState
+    AgentState --> LLM
+    LLM --> AgentAction
+    
+    %% Agent 分发到具体工具
+    AgentAction --> |"调用: 提取列表"| ToolParse
+    AgentAction --> |"调用: 抓取正文"| ToolFetch
+    AgentAction --> |"调用: 保存摘要"| ToolSave
+    AgentAction --> |"调用: 结束任务"| ToolEnd
+    
+    %% =======================================
+    %% 3. 核心精髓：状态写回与循环反馈 (对应截图左侧虚线)
+    %% =======================================
+    ToolParse -.-> |"结果写入历史，进入下一轮"| AgentState
+    ToolFetch -.-> AgentState
+    ToolSave -.-> AgentState
+    
+    %% 结束分支跳出循环
+    ToolEnd --> End
 
-    D -->|"save_summary"| G
+    %% =======================================
+    %% 4. 清新脱俗的极简配色 (低饱和度浅色底 + 雅致边框)
+    %% =======================================
+    
+    %% 用户/结束 (淡雅灰白)
+    classDef baseStyle fill:#F8FAFC,stroke:#CBD5E1,stroke-width:1px,color:#475569
+    %% Agent 状态/执行 (清透薄荷绿)
+    classDef agentStyle fill:#F0FDF4,stroke:#86EFAC,stroke-width:2px,color:#166534
+    %% 大模型 (静谧海蓝)
+    classDef llmStyle fill:#F0F9FF,stroke:#7DD3FC,stroke-width:2px,color:#0369A1
+    %% 工具层 (柔和香芋紫)
+    classDef toolStyle fill:#FAF5FF,stroke:#D8B4FE,stroke-width:2px,color:#581C87
 
-    classDef blue fill:#6366f1,stroke:#4f46e5,color:#fff;
-    classDef amber fill:#f59e0b,stroke:#d97706,color:#fff;
-    classDef sky fill:#0ea5e9,stroke:#0284c7,color:#fff;
-    classDef green fill:#10b981,stroke:#059669,color:#fff;
-    classDef gray fill:#64748b,stroke:#475569,color:#fff;
-    class A,J blue;
-    class B,G gray;
-    class C sky;
-    class D,I green;
-    class E gray;
-    class H amber;
+    %% 应用样式
+    class User,End baseStyle
+    class AgentState,AgentAction agentStyle
+    class LLM llmStyle
+    class ToolParse,ToolFetch,ToolSave,ToolEnd toolStyle
 ```
 
-**流程一**是 Agent 的决策闭环：每轮把写死的提示词（岗位说明书）+ 工具清单 + 对话历史一起发给 DeepSeek，大模型只负责决定下一步调哪个工具、填什么参数，Agent 执行后把结果写入历史进入下一轮，如此循环直到 `finish`。
+1. ### ⚙️ 核心工作流 (Agent ReAct 机制)
 
-**流程二**是结果展示：大模型在 `save_summary` 调用里直接写好摘要（作为参数填入），Agent 执行时取出 → 经 Channel 管道实时推给 UI → 进度条/日志/卡片同步更新。
+   本项目底层采用 **Agent + LLM + Tools** 的 ReAct (Reason + Act) 闭环架构。
 
-**列表页完整执行顺序**：
-1. 大模型根据提示词决策：先调"提取文章列表"
-2. 引擎解析页面返回 8 篇文章链接
-3. 大模型：「列表提取成功，逐篇处理」→ 本就需要调"抓取正文"、读完后写好摘要调"保存"
-4. 循环：抓取正文(#1) → 大模型写摘要 → 保存(#1) → UI 出现卡片 #1
-5. 重复直到最后一篇
-6. 大模型：「全部完成」→ 调"结束任务" → Channel 关闭 → 进度 100%
+   * **LLM (大模型)**：担任决策大脑。负责阅读历史上下文，思考并返回调用的工具指令（`tool_call`）。
+   * **Agent (智能体引擎)**：担任调度中枢。负责组装上下文、解析 LLM 指令、**实际执行被点名的工具**，并将执行结果写回历史。
+   * **Tools (工具集)**：底层能力集。包括页面解析、正文抓取、数据管道推送等。
+
+   根据目标页面的不同，Agent 会在 LLM 的指挥下走入以下两条链路：
+
+   #### 📌 路径 A：列表页处理（多篇循环）
+
+   当输入的 URL 为文章列表或首页时：
+
+   1. **试探与提取**：LLM 首轮决策提取列表，**Agent 调用 `提取列表` 工具**，成功解析出多篇文章链接并写回历史。
+   2. **逐篇解析**：LLM 遍历链接集并依次下达抓取指令，**Agent 循环调用 `抓取正文` 工具**获取网页内容。
+   3. **摘要与渲染**：LLM 基于正文生成摘要并发出保存指令，**Agent 调用 `保存摘要` 工具**。该工具同步触发后端 Channel，驱动前端 UI 瀑布式弹出摘要卡片。
+   4. **循环闭环**：所有文章处理完毕后，LLM 判定无后续任务，**Agent 调用 `结束任务` 工具**关闭数据通道，进度达 100%。
+
+   #### 📌 路径 B：单篇文章处理（智能降级）
+
+   当输入的 URL 为具体的单篇文章详情页时：
+
+   1. **提取失败与降级**：**Agent 调用 `提取列表` 工具**未找到文章集（提取数为 0），结果写回历史。LLM 感知后自动触发降级策略。
+   2. **直接抓取**：LLM 改变策略下达单篇抓取指令，**Agent 直接对原始 URL 调用 `抓取正文` 工具**。
+   3. **单篇摘要**：LLM 总结正文并下发保存指令，**Agent 调用 `保存摘要` 工具**，驱动前端弹出单张摘要卡片。
+   4. **任务完结**：LLM 确认单篇文章已保存完毕，**Agent 调用 `结束任务` 工具**，流程闭环。
 
 ### Agent 工具链
 
-| 工具 | 功能 |
-|---|---|
-| `get_article_list` | 从列表页提取文章链接 |
-| `get_article_content` | 抓取单篇文章标题 + 正文 |
-| `save_summary` | 保存大模型摘要并推送进度到 UI |
-| `finish` | 标记任务完成 |
+| 工具                  | 功能                          |
+| --------------------- | ----------------------------- |
+| `get_article_list`    | 从列表页提取文章链接          |
+| `get_article_content` | 抓取单篇文章标题 + 正文       |
+| `save_summary`        | 保存大模型摘要并推送进度到 UI |
+| `finish`              | 标记任务完成                  |
 
 ## 快速开始
 
@@ -123,13 +169,13 @@ Views (Blazor 页面)
                     └── Database / Logic Contracts (数据模型)
 ```
 
-| 模块 | 职责 |
-|---|---|
-| `AgentEngine` | ReAct 循环：调用大模型决策 → 执行工具 → 推送进度 |
-| `NewsSourceEngine` | 网页解析：链接提取、正文抓取、内容清洗 |
-| `WebPageAccessor` | 多通道抓取：curl → HttpClient → Playwright |
-| `DeepSeekAccessor` | 大模型 API 调用封装 |
-| `NewsBriefingManager` | 业务流程编排，管理 Channel 管道 |
+| 模块                  | 职责                                             |
+| --------------------- | ------------------------------------------------ |
+| `AgentEngine`         | ReAct 循环：调用大模型决策 → 执行工具 → 推送进度 |
+| `NewsSourceEngine`    | 网页解析：链接提取、正文抓取、内容清洗           |
+| `WebPageAccessor`     | 多通道抓取：curl → HttpClient → Playwright       |
+| `DeepSeekAccessor`    | 大模型 API 调用封装                              |
+| `NewsBriefingManager` | 业务流程编排，管理 Channel 管道                  |
 
 ## 核心设计取舍
 
@@ -153,14 +199,14 @@ Agent 后台多轮执行，每步都要推状态到 UI。Channel 是 .NET 原生
 
 ## 实测效果
 
-| 场景 | 结果 |
-|---|---|
-| 输入猫目首页 | 提取 8-10 篇并生成摘要 ✅ |
-| 输入猫目单篇文章 | 自动识别为单篇模式 ✅ |
-| 输入不支持的站点 | 提示"暂不支持该新闻源" ✅ |
-| 单篇抓取失败 | 展示标题 + 错误 + 原文链接 ✅ |
-| 处理中途取消 | 已完成保留，未完成停止 ✅ |
-| curl 不可用时 | 自动降级到 HttpClient / Playwright ✅ |
+| 场景             | 结果                                 |
+| ---------------- | ------------------------------------ |
+| 输入猫目首页     | 提取 8-10 篇并生成摘要 ✅             |
+| 输入猫目单篇文章 | 自动识别为单篇模式 ✅                 |
+| 输入不支持的站点 | 提示"暂不支持该新闻源" ✅             |
+| 单篇抓取失败     | 展示标题 + 错误 + 原文链接 ✅         |
+| 处理中途取消     | 已完成保留，未完成停止 ✅             |
+| curl 不可用时    | 自动降级到 HttpClient / Playwright ✅ |
 
 - 端到端耗时：8 篇约 25-35 秒
 - 首屏结果：第 1 篇摘要约 5 秒内出现
@@ -169,8 +215,8 @@ Agent 后台多轮执行，每步都要推状态到 UI。Channel 是 .NET 原生
 
 ## 演进路线
 
-| 版本 | 范围 |
-|---|---|
+| 版本           | 范围                                                     |
+| -------------- | -------------------------------------------------------- |
 | **v1（当前）** | 单源速览（猫目）、Agent 自主决策、实时进度、4 层抓取降级 |
-| **v2** | 速览历史持久化 + 历史列表页 + 多源配置扩展 |
-| **v3** | 定时自动速览 + 推送通知 + 用户系统 + 个性化订阅 |
+| **v2**         | 速览历史持久化 + 历史列表页 + 多源配置扩展               |
+| **v3**         | 定时自动速览 + 推送通知 + 用户系统 + 个性化订阅          |
