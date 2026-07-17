@@ -31,7 +31,7 @@
 <img width="2158" height="1024" alt="image" src="https://github.com/user-attachments/assets/fd96377b-0b97-433e-86eb-37c03bedde12" />
 
 
-1. ###  核心工作流 (Agent ReAct 机制)
+ ###  核心工作流 (Agent ReAct 机制)
 
    本项目底层采用 **Agent + LLM + Tools** 的 ReAct (Reason + Act) 闭环架构。
 
